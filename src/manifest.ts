@@ -1,3 +1,6 @@
+import { Upload } from "lucide-react";
+import React from "react";
+
 import routes from "./routes";
 
 const manifest = {
@@ -5,11 +8,12 @@ const manifest = {
   routes,
   extends: [],
   components: {},
-  navItems: [
+  navItems: [],
+  adminNavItems: [
     {
-      name: "PlugTest",         
-      url: "plugtest",         
-      icon: "CiBeaker1",
+      name: "Imports",
+      url: "/admin/import",
+      icon: React.createElement(Upload, { className: "size-4" }),
     },
   ],
   encounterTabs: {},

@@ -1,16 +1,28 @@
-import TestPage from "@/components/pages/TestPage";
+import { Redirect } from "raviger";
+import type { ReactNode } from "react";
+
+import ChargeItemDefinitionImport from "@/components/pages/ChargeItemDefinitionImport";
+import DepartmentImport from "@/components/pages/DepartmentImport";
+import ImportsLayout, { ImportTabId } from "@/components/pages/ImportsLayout";
+import LocationImport from "@/components/pages/LocationImport";
+import ProductKnowledgeImport from "@/components/pages/ProductKnowledgeImport";
+import UsersImportPage from "@/components/pages/UsersImport";
+
+const renderImportsPage = (activeTab: ImportTabId, content: ReactNode) => (
+  <ImportsLayout activeTab={activeTab}>{content}</ImportsLayout>
+);
 
 const routes = {
-  "/facility/:facilityId/plugtest": ({
-    facilityId,
-  }: {
-    facilityId: string;
-  }) => <TestPage facilityId={facilityId} />,
-  "/facility/:facilityId/plugtest/dashboard": ({
-    facilityId,
-  }: {
-    facilityId: string;
-  }) => <TestPage facilityId={facilityId} />,
+  "/admin/import": () => <Redirect to="/admin/import/users" />,
+  "/admin/import/users": () => renderImportsPage("users", <UsersImportPage />),
+  "/admin/import/departments": () =>
+    renderImportsPage("departments", <DepartmentImport />),
+  "/admin/import/locations": () =>
+    renderImportsPage("locations", <LocationImport />),
+  "/admin/import/charge-item-definition": () =>
+    renderImportsPage("charge-item-definition", <ChargeItemDefinitionImport />),
+  "/admin/import/product-knowledge": () =>
+    renderImportsPage("product-knowledge", <ProductKnowledgeImport />),
 };
 
 export default routes;
