@@ -13,6 +13,7 @@ import { generateSampleCsv } from "@/utils/observationDefinitionConstants";
 import { AlertCircle, Database, Upload } from "lucide-react";
 import { useState } from "react";
 
+import MasterDataFileSelector from "@/components/shared/MasterDataFileSelector";
 import ObservationDefinitionCsvImport from "./ObservationDefinitionCsvImport";
 import ObservationDefinitionMasterImport from "./ObservationDefinitionMasterImport";
 
@@ -23,6 +24,7 @@ interface ObservationDefinitionImportProps {
 type ActiveView =
   | { kind: "upload" }
   | { kind: "csv"; csvText: string }
+  | { kind: "master-select" }
   | { kind: "master"; csvText: string };
 
 export default function ObservationDefinitionImport({
@@ -30,8 +32,6 @@ export default function ObservationDefinitionImport({
 }: ObservationDefinitionImportProps) {
   const [activeView, setActiveView] = useState<ActiveView>({ kind: "upload" });
   const [uploadError, setUploadError] = useState("");
-  const [bundledError, setBundledError] = useState("");
-  const [bundledLoading, setBundledLoading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState("");
 
   const { availability, files } = useMasterDataAvailability();
@@ -44,7 +44,6 @@ export default function ObservationDefinitionImport({
         "Manual uploads are disabled because observation definition data is bundled with this build.",
       );
       setUploadedFileName("");
-      setBundledError("");
       return;
     }
     const file = event.target.files?.[0];
@@ -61,7 +60,6 @@ export default function ObservationDefinitionImport({
       try {
         const csvText = e.target?.result as string;
         setUploadError("");
-        setBundledError("");
         setUploadedFileName(file.name);
         setActiveView({ kind: "csv", csvText });
       } catch {
@@ -71,36 +69,8 @@ export default function ObservationDefinitionImport({
     reader.readAsText(file);
   };
 
-  const handleBundledImport = async () => {
-    if (!repoFileAvailable) {
-      setBundledError(
-        "Bundled observation definition dataset is not available.",
-      );
-      return;
-    }
-
-    setBundledError("");
-    setUploadError("");
-    setBundledLoading(true);
-
-    try {
-      const fileUrl = files["observation-definition"];
-      if (!fileUrl) {
-        throw new Error("Dataset file missing");
-      }
-      const response = await fetch(fileUrl, { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("Unable to fetch bundled observation definition CSV");
-      }
-      const csvText = await response.text();
-      setActiveView({ kind: "master", csvText });
-    } catch (error) {
-      setBundledError(
-        error instanceof Error ? error.message : "Error loading dataset",
-      );
-    } finally {
-      setBundledLoading(false);
-    }
+  const handleBundledImport = () => {
+    setActiveView({ kind: "master-select" });
   };
 
   const downloadSample = () => {
@@ -124,6 +94,17 @@ export default function ObservationDefinitionImport({
       <ObservationDefinitionCsvImport
         facilityId={facilityId}
         initialCsvText={activeView.csvText}
+        onBack={handleBack}
+      />
+    );
+  }
+
+  if (activeView.kind === "master-select") {
+    return (
+      <MasterDataFileSelector
+        title="Observation Definitions"
+        files={files["observation-definition"]}
+        onFileSelected={(csvText) => setActiveView({ kind: "master", csvText })}
         onBack={handleBack}
       />
     );
@@ -215,7 +196,7 @@ export default function ObservationDefinitionImport({
       </Card>
       <Card className="h-full flex flex-col">
         <CardHeader>
-          <CardTitle>Master Observation Definitions</CardTitle>
+          <CardTitle>Import Observation Definitions from dataset</CardTitle>
           <CardDescription>
             Import data for Observation Definitions from available master
             dataset.
@@ -239,11 +220,9 @@ export default function ObservationDefinitionImport({
                       variant="outline"
                       size="sm"
                       onClick={handleBundledImport}
-                      disabled={!repoFileAvailable || bundledLoading}
+                      disabled={!repoFileAvailable}
                     >
-                      {bundledLoading
-                        ? "Loading Master Data..."
-                        : "Import Master Data"}
+                      Import Master Data
                     </Button>
                   </div>
                 ) : (
@@ -256,12 +235,6 @@ export default function ObservationDefinitionImport({
               </div>
             </div>
           </div>
-          {bundledError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{bundledError}</AlertDescription>
-            </Alert>
-          )}
         </CardContent>
       </Card>
     </div>

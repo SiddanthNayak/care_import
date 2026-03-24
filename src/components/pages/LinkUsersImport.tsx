@@ -3,8 +3,8 @@ import { AlertCircle, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { queryString, request } from "@/apis/request";
-import type { FacilityOrganizationRead } from "@/components/Pickers/DepartmentSelect";
-import type { RoleRead } from "@/components/Pickers/RoleSelect";
+import type { FacilityOrganizationRead } from "@/types/location/facilityOrganization";
+import type { RoleRead } from "@/types/user/role";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {

@@ -6,6 +6,7 @@
   "author": "",
   "license": "ISC",
   "scripts": {
+    "generate-manifest": "node scripts/generate-master-manifest.mjs",
     "start": "vite build --watch & vite preview --port 5273",
     "build": "vite build",
     "preview": "vite preview"
