@@ -7,7 +7,7 @@ export async function createSlug(
     return "";
   }
 
-  const baseLength = Math.min(maxLength, 18);
+  const baseLength = Math.min(maxLength, 17);
   let slug = name.toLowerCase();
   slug = slug.replace(/[^a-z0-9\s_-]/g, "");
   slug = slug.replace(/\s+/g, "-");
@@ -27,5 +27,8 @@ export async function createSlug(
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
-  return `${slug}-${hashHex.slice(0, 7)}`;
+  // Always produce exactly maxLength characters:
+  // slug (variable) + "-" (1) + hash (fills the rest)
+  const hashLength = maxLength - slug.length - 1;
+  return `${slug}-${hashHex.slice(0, hashLength)}`;
 }

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import { disableOverride } from "@/config";
 import { useMasterDataAvailability } from "@/hooks/useMasterDataAvailability";
-import { csvEscape } from "@/utils/importHelpers";
+import { generateSampleCsv } from "@/utils/observationDefinitionConstants";
 import { AlertCircle, Database, Upload } from "lucide-react";
 import { useState } from "react";
 
@@ -104,93 +104,7 @@ export default function ObservationDefinitionImport({
   };
 
   const downloadSample = () => {
-    const headers = [
-      "title",
-      "description",
-      "category",
-      "status",
-      "code_system",
-      "code_value",
-      "code_display",
-      "permitted_data_type",
-      "component",
-      "body_site_system",
-      "body_site_code",
-      "body_site_display",
-      "method_system",
-      "method_code",
-      "method_display",
-      "permitted_unit_system",
-      "permitted_unit_code",
-      "permitted_unit_display",
-      "derived_from_uri",
-    ];
-
-    const componentExample = JSON.stringify([
-      {
-        code: {
-          system: "http://loinc.org",
-          code: "8480-6",
-          display: "Systolic blood pressure",
-        },
-        permitted_data_type: "quantity",
-        permitted_unit: {
-          system: "http://unitsofmeasure.org",
-          code: "mm[Hg]",
-          display: "mmHg",
-        },
-        qualified_ranges: [],
-      },
-    ]);
-
-    const rows = [
-      [
-        "Blood Pressure",
-        "Systolic blood pressure",
-        "vital_signs",
-        "active",
-        "http://loinc.org",
-        "8480-6",
-        "Systolic blood pressure",
-        "quantity",
-        componentExample,
-        "",
-        "",
-        "",
-        "http://snomed.info/sct",
-        "272394005",
-        "Technique",
-        "http://unitsofmeasure.org",
-        "mm[Hg]",
-        "mmHg",
-        "",
-      ].map(csvEscape),
-      [
-        "Fasting Blood Sugar",
-        "Fasting blood glucose",
-        "laboratory",
-        "active",
-        "http://loinc.org",
-        "1558-6",
-        "Glucose [Moles/volume] in Serum or Plasma",
-        "quantity",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "http://unitsofmeasure.org",
-        "mmol/L",
-        "mmol/L",
-        "",
-      ].map(csvEscape),
-    ];
-
-    const sampleCSV = `${headers.join(",")}\n${rows
-      .map((row) => row.join(","))
-      .join("\n")}`;
+    const sampleCSV = generateSampleCsv();
     const blob = new Blob([sampleCSV], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");

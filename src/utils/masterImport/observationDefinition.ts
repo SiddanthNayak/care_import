@@ -65,14 +65,251 @@ const QUESTION_TYPES = [
   "quantity",
 ] as const;
 
+const VALID_GENDERS = ["male", "female"] as const;
+
+const VALID_AGE_OPS = ["years", "months", "days"] as const;
+
 const normalizeHeader = (header: string) =>
-  header.toLowerCase().replace(/[^a-z0-9]/g, "");
+  header.toLowerCase().replace(/[^a-z0-9_]/g, "");
 
 const isJsonObject = (value: unknown): value is JsonObject =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const isNonEmptyString = (value: unknown) =>
   typeof value === "string" && value.trim().length > 0;
+
+/* ------------------------------------------------------------------ */
+/*  Flat component column detection & parsing                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Regex patterns for the flat component column headers.
+ *  c{N}_code_system, c{N}_i{M}_age_min, c{N}_i{M}_r{P}_display, etc.
+ */
+const COMPONENT_COL_RE = /^c(\d+)_/;
+const INTERPRETATION_COL_RE = /^c(\d+)_i(\d+)_/;
+const RANGE_COL_RE = /^c(\d+)_i(\d+)_r(\d+)_/;
+
+interface FlatDimensions {
+  maxComponent: number;
+  /** keyed by component index (1-based) → max interpretation index */
+  maxInterpretation: Map<number, number>;
+  /** keyed by "c-i" → max range index */
+  maxRange: Map<string, number>;
+}
+
+/**
+ * Scan normalised header names and derive how many component / interpretation /
+ * range slots exist in the CSV.  Returns null when there are no flat component
+ * columns (i.e. the legacy JSON-blob format).
+ */
+const detectFlatDimensions = (
+  headerMap: Record<string, number>,
+): FlatDimensions | null => {
+  let maxComponent = 0;
+  const maxInterpretation = new Map<number, number>();
+  const maxRange = new Map<string, number>();
+
+  for (const key of Object.keys(headerMap)) {
+    let m = RANGE_COL_RE.exec(key);
+    if (m) {
+      const c = Number(m[1]);
+      const i = Number(m[2]);
+      const r = Number(m[3]);
+      maxComponent = Math.max(maxComponent, c);
+      maxInterpretation.set(c, Math.max(maxInterpretation.get(c) ?? 0, i));
+      const ciKey = `${c}-${i}`;
+      maxRange.set(ciKey, Math.max(maxRange.get(ciKey) ?? 0, r));
+      continue;
+    }
+    m = INTERPRETATION_COL_RE.exec(key);
+    if (m) {
+      const c = Number(m[1]);
+      const i = Number(m[2]);
+      maxComponent = Math.max(maxComponent, c);
+      maxInterpretation.set(c, Math.max(maxInterpretation.get(c) ?? 0, i));
+      continue;
+    }
+    m = COMPONENT_COL_RE.exec(key);
+    if (m) {
+      const c = Number(m[1]);
+      maxComponent = Math.max(maxComponent, c);
+    }
+  }
+
+  return maxComponent > 0
+    ? { maxComponent, maxInterpretation, maxRange }
+    : null;
+};
+
+/**
+ * Parse flat component columns from a single CSV row into the
+ * ObservationComponentPayload[] structure expected by the API.
+ */
+const parseFlatComponents = (
+  row: string[],
+  headerMap: Record<string, number>,
+  dims: FlatDimensions,
+  errors: string[],
+): ObservationComponentPayload[] => {
+  const components: ObservationComponentPayload[] = [];
+
+  for (let c = 1; c <= dims.maxComponent; c++) {
+    const get = (suffix: string) => {
+      const idx = headerMap[`c${c}_${suffix}`];
+      return idx !== undefined ? (row[idx] ?? "").trim() : "";
+    };
+
+    const codeValue = get("code_value");
+    const codeDisplay = get("code_display");
+
+    // If there's no code_value this component slot is empty — skip
+    if (!codeValue && !codeDisplay) continue;
+
+    const label = `Component ${c}`;
+
+    if (!codeValue || !codeDisplay) {
+      errors.push(`${label} requires both code_value and code_display`);
+      continue;
+    }
+
+    const codeSystem = get("code_system") || "http://loinc.org";
+    const permittedDataType = get("permitted_data_type");
+
+    if (!permittedDataType) {
+      errors.push(`${label} missing permitted_data_type`);
+    } else if (!QUESTION_TYPES.includes(permittedDataType as never)) {
+      errors.push(`${label} invalid permitted_data_type`);
+    }
+
+    // optional unit
+    const unitCode = get("unit_code");
+    const unitDisplay = get("unit_display");
+    let permittedUnit: CodePayload | null = null;
+    if (unitCode || unitDisplay) {
+      if (!unitCode || !unitDisplay) {
+        errors.push(`${label} permitted unit requires both code and display`);
+      } else {
+        const unitSystem = get("unit_system") || "http://unitsofmeasure.org";
+        permittedUnit = {
+          system: unitSystem,
+          code: unitCode,
+          display: unitDisplay,
+        };
+      }
+    }
+
+    // Build qualified_ranges from interpretation columns
+    const qualifiedRanges: JsonObject[] = [];
+    const interpMax = dims.maxInterpretation.get(c) ?? 0;
+
+    for (let i = 1; i <= interpMax; i++) {
+      const getI = (suffix: string) => {
+        const idx = headerMap[`c${c}_i${i}_${suffix}`];
+        return idx !== undefined ? (row[idx] ?? "").trim() : "";
+      };
+
+      const rangeMax = dims.maxRange.get(`${c}-${i}`) ?? 0;
+
+      // Collect range bands
+      const rangeBands: JsonObject[] = [];
+      for (let r = 1; r <= rangeMax; r++) {
+        const getR = (suffix: string) => {
+          const idx = headerMap[`c${c}_i${i}_r${r}_${suffix}`];
+          return idx !== undefined ? (row[idx] ?? "").trim() : "";
+        };
+
+        const display = getR("display");
+        const min = getR("min");
+        const max = getR("max");
+
+        // If display is empty this range slot is unused — skip
+        if (!display) continue;
+
+        if (!min && !max) {
+          errors.push(
+            `${label} interpretation ${i} range ${r} must have min or max`,
+          );
+        }
+
+        if (min && max && Number(min) > Number(max)) {
+          errors.push(
+            `${label} interpretation ${i} range ${r}: min must be ≤ max`,
+          );
+        }
+
+        const band: JsonObject = {
+          interpretation: { display },
+        };
+        if (min) band.min = min;
+        if (max) band.max = max;
+        rangeBands.push(band);
+      }
+
+      // Skip this interpretation slot entirely if no range bands were found
+      if (rangeBands.length === 0) continue;
+
+      // Build conditions from age/gender columns
+      const conditions: JsonObject[] = [];
+      const ageMin = getI("age_min");
+      const ageMax = getI("age_max");
+      const ageOp = getI("age_op");
+      if (ageMin || ageMax) {
+        if (!ageOp) {
+          errors.push(
+            `${label} interpretation ${i}: age_op is required when age_min/age_max is set (years/months/days)`,
+          );
+        } else if (!VALID_AGE_OPS.includes(ageOp.toLowerCase() as never)) {
+          errors.push(
+            `${label} interpretation ${i}: invalid age_op "${ageOp}" (must be years/months/days)`,
+          );
+        }
+        const ageValue: JsonObject = {
+          value_type: ageOp ? ageOp.toLowerCase() : "years",
+        };
+        if (ageMin) ageValue.min = Number(ageMin);
+        if (ageMax) ageValue.max = Number(ageMax);
+        conditions.push({
+          metric: "patient_age",
+          operation: "in_range",
+          value: ageValue,
+        });
+      }
+      const gender = getI("gender");
+      if (gender) {
+        if (!VALID_GENDERS.includes(gender.toLowerCase() as never)) {
+          errors.push(
+            `${label} interpretation ${i}: invalid gender "${gender}"`,
+          );
+        } else {
+          conditions.push({
+            metric: "patient_gender",
+            operation: "equality",
+            value: gender.toLowerCase(),
+          });
+        }
+      }
+
+      const qr: JsonObject = {
+        ranges: rangeBands,
+        _interpretation_type: "ranges",
+      };
+      if (conditions.length > 0) {
+        qr.conditions = conditions;
+      }
+      qualifiedRanges.push(qr);
+    }
+
+    components.push({
+      code: { system: codeSystem, code: codeValue, display: codeDisplay },
+      permitted_data_type: permittedDataType,
+      permitted_unit: permittedUnit,
+      qualified_ranges: qualifiedRanges,
+    } as ObservationComponentPayload);
+  }
+
+  return components;
+};
 
 const validateCodeObject = (
   value: unknown,
@@ -115,37 +352,40 @@ const validateQualifiedRanges = (
       return;
     }
 
+    // conditions are optional — validate only when present
     const conditions = range.conditions;
-    if (!Array.isArray(conditions)) {
-      errors.push(`${indexLabel} must include conditions array`);
-    } else {
-      conditions.forEach((condition, conditionIndex) => {
-        if (!isJsonObject(condition)) {
-          errors.push(
-            `${indexLabel} condition ${conditionIndex + 1} is invalid`,
-          );
-          return;
-        }
-        if (!isNonEmptyString(condition.metric)) {
-          errors.push(
-            `${indexLabel} condition ${conditionIndex + 1} missing metric`,
-          );
-        }
-        if (!isNonEmptyString(condition.operation)) {
-          errors.push(
-            `${indexLabel} condition ${conditionIndex + 1} missing operation`,
-          );
-        }
-        const value = condition.value;
-        const hasValue =
-          isNonEmptyString(value) ||
-          (isJsonObject(value) && Object.keys(value).length > 0);
-        if (!hasValue) {
-          errors.push(
-            `${indexLabel} condition ${conditionIndex + 1} missing value`,
-          );
-        }
-      });
+    if (conditions !== undefined && conditions !== null) {
+      if (!Array.isArray(conditions)) {
+        errors.push(`${indexLabel} conditions must be an array`);
+      } else {
+        conditions.forEach((condition, conditionIndex) => {
+          if (!isJsonObject(condition)) {
+            errors.push(
+              `${indexLabel} condition ${conditionIndex + 1} is invalid`,
+            );
+            return;
+          }
+          if (!isNonEmptyString(condition.metric)) {
+            errors.push(
+              `${indexLabel} condition ${conditionIndex + 1} missing metric`,
+            );
+          }
+          if (!isNonEmptyString(condition.operation)) {
+            errors.push(
+              `${indexLabel} condition ${conditionIndex + 1} missing operation`,
+            );
+          }
+          const value = condition.value;
+          const hasValue =
+            isNonEmptyString(value) ||
+            (isJsonObject(value) && Object.keys(value).length > 0);
+          if (!hasValue) {
+            errors.push(
+              `${indexLabel} condition ${conditionIndex + 1} missing value`,
+            );
+          }
+        });
+      }
     }
 
     const numericRanges = range.ranges;
@@ -239,6 +479,10 @@ export const parseObservationDefinitionCsv = (
     throw new Error(`Missing required headers: ${missingHeaders.join(", ")}`);
   }
 
+  // Auto-detect: flat component columns (c1_code_value …) vs legacy JSON blob
+  const flatDims = detectFlatDimensions(headerMap);
+  const useFlatComponents = flatDims !== null;
+
   return rows.map((row, index) => {
     const errors: string[] = [];
     const title = getCellValue(row, headerMap, "title").trim();
@@ -303,7 +547,12 @@ export const parseObservationDefinitionCsv = (
 
     const componentRaw = getCellValue(row, headerMap, "component").trim();
     let component: ObservationComponentPayload[] = [];
-    if (componentRaw) {
+
+    if (useFlatComponents && flatDims) {
+      // ── Flat column format: c1_code_value, c1_i1_r1_display, etc. ──
+      component = parseFlatComponents(row, headerMap, flatDims, errors);
+    } else if (componentRaw) {
+      // ── Legacy JSON blob format ──
       try {
         const parsed = JSON.parse(componentRaw);
         if (Array.isArray(parsed)) {
