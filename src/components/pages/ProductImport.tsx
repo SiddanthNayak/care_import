@@ -648,6 +648,7 @@ export default function ProductImport({ facilityId }: ProductImportProps) {
             slug_value: slugValue,
             status: ChargeItemDefinitionStatus.active,
             can_edit_charge_item: true,
+            discount_configuration: [],
             category: categorySlug ?? "",
             price_components: [
               {
