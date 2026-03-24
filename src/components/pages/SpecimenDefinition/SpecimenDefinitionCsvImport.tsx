@@ -1,8 +1,6 @@
-import { AlertCircle, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { APIError, request } from "@/apis/request";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { request } from "@/apis/request";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,41 +11,41 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { disableOverride } from "@/config";
-import { useMasterDataAvailability } from "@/hooks/useMasterDataAvailability";
-import {
-  parseSpecimenDefinitionCsv,
-  type SpecimenProcessedRow,
-} from "@/utils/masterImport/specimenDefinition";
-import { createSlug } from "@/utils/slug";
-
 import {
   CodeReference,
   ContainerSpec,
   ImportResults,
   Preference,
   SpecimenDefinitionCreate,
-  SpecimenDefinitionImportProps,
   TypeTestedSpec,
 } from "@/types/emr/specimenDefinition/specimenDefinition";
+import {
+  parseSpecimenDefinitionCsv,
+  type SpecimenProcessedRow,
+} from "@/utils/masterImport/specimenDefinition";
+import { createSlug } from "@/utils/slug";
 
 const CODE_ERROR_PREFIX = "Invalid code:";
 
 const stripLookupErrors = (errors: string[]) =>
   errors.filter((error) => !error.startsWith(CODE_ERROR_PREFIX));
 
-const csvEscape = (value: string) => `"${value.replace(/"/g, '""')}"`;
+interface SpecimenDefinitionCsvImportProps {
+  facilityId?: string;
+  initialCsvText: string;
+  onBack: () => void;
+}
 
-export default function SpecimenDefinitionImport({
+export default function SpecimenDefinitionCsvImport({
   facilityId,
-}: SpecimenDefinitionImportProps) {
+  initialCsvText,
+  onBack,
+}: SpecimenDefinitionCsvImportProps) {
   const [currentStep, setCurrentStep] = useState<
-    "upload" | "review" | "importing" | "done"
-  >("upload");
-  const [uploadError, setUploadError] = useState<string>("");
-  const [uploadedFileName, setUploadedFileName] = useState<string>("");
+    "review" | "importing" | "done"
+  >("review");
   const [processedRows, setProcessedRows] = useState<SpecimenProcessedRow[]>(
-    [],
+    () => parseSpecimenDefinitionCsv(initialCsvText),
   );
   const [results, setResults] = useState<ImportResults | null>(null);
   const [totalToImport, setTotalToImport] = useState(0);
@@ -55,16 +53,17 @@ export default function SpecimenDefinitionImport({
     "idle" | "loading" | "ready" | "error"
   >("idle");
   const [lastLookupSignature, setLastLookupSignature] = useState<string>("");
-  const { availability } = useMasterDataAvailability();
-  const repoFileAvailable = availability["specimen-definition"];
-  const disableManualUpload = disableOverride && repoFileAvailable;
-  console.log(disableOverride);
 
   const summary = useMemo(() => {
     const valid = processedRows.filter((row) => row.errors.length === 0).length;
     const invalid = processedRows.length - valid;
     return { total: processedRows.length, valid, invalid };
   }, [processedRows]);
+
+  const validRows = useMemo(
+    () => processedRows.filter((row) => row.errors.length === 0),
+    [processedRows],
+  );
 
   const uniqueCodeReferences = useMemo(() => {
     const map = new Map<string, CodeReference>();
@@ -149,131 +148,6 @@ export default function SpecimenDefinitionImport({
     resolveCodeLookups,
   ]);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    console.log(disableManualUpload);
-    if (disableManualUpload) {
-      setUploadError(
-        "Manual uploads are disabled because specimen definition data is bundled with this build.",
-      );
-      setUploadedFileName("");
-      return;
-    }
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
-      setUploadError("Please upload a valid CSV file");
-      setUploadedFileName("");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const csvText = e.target?.result as string;
-        const processed = parseSpecimenDefinitionCsv(csvText);
-
-        setUploadError("");
-        setUploadedFileName(file.name);
-        setProcessedRows(processed);
-        setResults(null);
-        setLookupStatus("idle");
-        setLastLookupSignature("");
-        setCurrentStep("review");
-      } catch (error) {
-        setUploadError(
-          error instanceof Error ? error.message : "Error processing CSV file",
-        );
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const downloadSample = () => {
-    const headers = [
-      "title",
-      "slug_value",
-      "description",
-      "derived_from_uri",
-      "type_collected_system",
-      "type_collected_code",
-      "type_collected_display",
-      "collection_system",
-      "collection_code",
-      "collection_display",
-      "is_derived",
-      "preference",
-      "single_use",
-      "requirement",
-      "retention_value",
-      "retention_unit_system",
-      "retention_unit_code",
-      "retention_unit_display",
-      "container_description",
-      "container_capacity_value",
-      "container_capacity_unit_system",
-      "container_capacity_unit_code",
-      "container_capacity_unit_display",
-      "container_minimum_volume_quantity_value",
-      "container_minimum_volume_quantity_unit_system",
-      "container_minimum_volume_quantity_unit_code",
-      "container_minimum_volume_quantity_unit_display",
-      "container_minimum_volume_string",
-      "container_cap_system",
-      "container_cap_code",
-      "container_cap_display",
-      "container_preparation",
-    ];
-
-    const rows = [
-      [
-        "Blood",
-        "blood",
-        "Blood",
-        "",
-        "http://terminology.hl7.org/CodeSystem/v2-0487",
-        "ACNFLD",
-        "Fluid, Acne",
-        "http://snomed.info/sct",
-        "278450005",
-        "Finger stick",
-        "true",
-        "preferred",
-        "true",
-        "Requirement",
-        "1.00",
-        "http://unitsofmeasure.org",
-        "h",
-        "hours",
-        "Container Description",
-        "5.00",
-        "http://unitsofmeasure.org",
-        "mL",
-        "milliliter",
-        "5.00",
-        "http://unitsofmeasure.org",
-        "mL",
-        "milliliter",
-        "",
-        "http://terminology.hl7.org/CodeSystem/container-cap",
-        "black",
-        "black cap",
-        "Container Prep",
-      ].map(csvEscape),
-    ];
-
-    const sampleCSV =
-      `${headers.join(",")}` +
-      `\n${rows.map((row) => row.join(",")).join("\n")}`;
-    const blob = new Blob([sampleCSV], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "sample_specimen_definition.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
   const cleanContainerData = (container?: ContainerSpec | null) => {
     if (!container) return undefined;
     const hasContent =
@@ -299,14 +173,8 @@ export default function SpecimenDefinitionImport({
   };
 
   const runImport = async () => {
-    if (!facilityId) {
-      setUploadError("Select a facility to import specimen definitions");
-      setCurrentStep("upload");
-      return;
-    }
+    if (!facilityId) return;
 
-    const validRows = processedRows.filter((row) => row.errors.length === 0);
-    const invalidRows = processedRows.length - validRows.length;
     setTotalToImport(validRows.length);
 
     if (validRows.length === 0) {
@@ -315,7 +183,7 @@ export default function SpecimenDefinitionImport({
         created: 0,
         updated: 0,
         failed: 0,
-        skipped: invalidRows,
+        skipped: summary.invalid,
         failures: [],
       });
       setCurrentStep("done");
@@ -328,7 +196,7 @@ export default function SpecimenDefinitionImport({
       created: 0,
       updated: 0,
       failed: 0,
-      skipped: invalidRows,
+      skipped: summary.invalid,
       failures: [],
     });
 
@@ -369,43 +237,21 @@ export default function SpecimenDefinitionImport({
           type_tested: typeTested,
         };
 
-        const detailPath = `/api/v1/facility/${facilityId}/specimen_definition/${slug}/`;
-        const listPath = `/api/v1/facility/${facilityId}/specimen_definition/`;
+        const upsertPath = `/api/v1/facility/${facilityId}/specimen_definition/upsert/`;
+        await request(upsertPath, {
+          method: "POST",
+          body: JSON.stringify({ datapoints: [payload] }),
+        });
 
-        try {
-          await request(detailPath, { method: "GET" });
-          await request(detailPath, {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          });
-          setResults((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  processed: prev.processed + 1,
-                  updated: prev.updated + 1,
-                }
-              : prev,
-          );
-        } catch (error) {
-          if (error instanceof APIError && error.status !== 404) {
-            throw error;
-          }
-
-          await request(listPath, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
-          setResults((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  processed: prev.processed + 1,
-                  created: prev.created + 1,
-                }
-              : prev,
-          );
-        }
+        setResults((prev) =>
+          prev
+            ? {
+                ...prev,
+                processed: prev.processed + 1,
+                created: prev.created + 1,
+              }
+            : prev,
+        );
       } catch (error) {
         const reason = error instanceof Error ? error.message : "Unknown error";
         setResults((prev) =>
@@ -427,91 +273,12 @@ export default function SpecimenDefinitionImport({
     setCurrentStep("done");
   };
 
-  if (currentStep === "upload") {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Import Specimen Definitions from CSV
-            </CardTitle>
-            <CardDescription>
-              Upload a CSV file to create specimen definitions and validate them
-              before import.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="specimen-definition-csv-upload"
-                disabled={disableManualUpload}
-              />
-              <label
-                htmlFor="specimen-definition-csv-upload"
-                className={
-                  disableManualUpload
-                    ? "cursor-not-allowed opacity-60"
-                    : "cursor-pointer"
-                }
-              >
-                <div className="flex flex-col items-center gap-4">
-                  <Upload className="h-12 w-12 text-gray-400" />
-                  <div>
-                    <p className="text-lg font-medium">
-                      Click to upload CSV file
-                    </p>
-                    <p className="text-sm text-gray-500">or drag and drop</p>
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Required columns: title, description, type_collected_system,
-                    type_collected_code, type_collected_display
-                  </p>
-                  <Button variant="outline" size="sm" onClick={downloadSample}>
-                    Download Sample CSV
-                  </Button>
-                </div>
-              </label>
-            </div>
-
-            {uploadedFileName && (
-              <p className="mt-3 text-sm text-gray-600">
-                Selected file: {uploadedFileName}
-              </p>
-            )}
-
-            {disableManualUpload && (
-              <Alert className="mt-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Manual uploads are disabled because this build includes a
-                  specimen definition dataset in the repository.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {uploadError && (
-              <Alert className="mt-4" variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{uploadError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (currentStep === "review") {
     return (
       <div className="max-w-7xl mx-auto">
         <Card>
           <CardHeader>
-            <CardTitle>Specimen Definition Import Wizard</CardTitle>
+            <CardTitle>Specimen Definition Import — CSV Review</CardTitle>
             <CardDescription>
               Review and validate specimen definitions before importing.
             </CardDescription>
@@ -538,7 +305,14 @@ export default function SpecimenDefinitionImport({
                 </thead>
                 <tbody>
                   {processedRows.map((row) => (
-                    <tr key={row.rowIndex} className="border-t border-gray-100">
+                    <tr
+                      key={row.rowIndex}
+                      className={
+                        row.errors.length === 0
+                          ? "border-t border-gray-100"
+                          : "border-t border-gray-100 bg-gray-50 text-gray-400"
+                      }
+                    >
                       <td className="px-4 py-2 text-gray-500 align-top">
                         {row.rowIndex}
                       </td>
@@ -564,17 +338,15 @@ export default function SpecimenDefinitionImport({
             </div>
 
             <div className="flex justify-between mt-6">
-              <Button
-                variant="outline"
-                onClick={() => setCurrentStep("upload")}
-              >
+              <Button variant="outline" onClick={onBack}>
                 Back
               </Button>
               <Button
                 onClick={runImport}
-                disabled={summary.valid === 0 || lookupStatus === "loading"}
+                disabled={validRows.length === 0 || lookupStatus === "loading"}
               >
-                Import
+                Import {validRows.length} Valid Row
+                {validRows.length !== 1 ? "s" : ""}
               </Button>
             </div>
           </CardContent>
@@ -603,9 +375,6 @@ export default function SpecimenDefinitionImport({
             <div className="mt-4 flex flex-wrap gap-4 text-sm">
               <Badge variant="outline">Processed: {processed}</Badge>
               <Badge variant="primary">Created: {results?.created ?? 0}</Badge>
-              <Badge variant="secondary">
-                Updated: {results?.updated ?? 0}
-              </Badge>
               <Badge variant="secondary">Failed: {results?.failed ?? 0}</Badge>
               <Badge variant="outline">Skipped: {results?.skipped ?? 0}</Badge>
             </div>
@@ -615,6 +384,7 @@ export default function SpecimenDefinitionImport({
     );
   }
 
+  // done
   return (
     <div className="max-w-4xl mx-auto">
       <Card>
@@ -627,7 +397,6 @@ export default function SpecimenDefinitionImport({
         <CardContent>
           <div className="flex flex-wrap gap-4 mb-6">
             <Badge variant="primary">Created: {results?.created ?? 0}</Badge>
-            <Badge variant="secondary">Updated: {results?.updated ?? 0}</Badge>
             <Badge variant="secondary">Failed: {results?.failed ?? 0}</Badge>
             <Badge variant="outline">Skipped: {results?.skipped ?? 0}</Badge>
           </div>
@@ -667,19 +436,8 @@ export default function SpecimenDefinitionImport({
           )}
 
           <div className="flex justify-end mt-6">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setProcessedRows([]);
-                setResults(null);
-                setUploadedFileName("");
-                setUploadError("");
-                setLookupStatus("idle");
-                setLastLookupSignature("");
-                setCurrentStep("upload");
-              }}
-            >
-              Upload Another File
+            <Button variant="outline" onClick={onBack}>
+              Import Another File
             </Button>
           </div>
         </CardContent>

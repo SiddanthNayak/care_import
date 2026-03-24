@@ -1,17 +1,16 @@
 import { Redirect } from "raviger";
 import type { ReactNode } from "react";
 
-import ActivityDefinitionImport from "@/components/pages/ActivityDefinitionImport";
+import ActivityDefinitionImport from "@/components/pages/ActivityDefinition/ActivityDefinitionImport";
 import ChargeItemDefinitionImport from "@/components/pages/ChargeItemDefinitionImport";
 import DepartmentImport from "@/components/pages/DepartmentImport";
 import ImportsLayout, { ImportTabId } from "@/components/pages/ImportsLayout";
 import LinkUsersImport from "@/components/pages/LinkUsersImport";
 import LocationImport from "@/components/pages/LocationImport";
-import MasterDataImport from "@/components/pages/MasterDataImport";
-import ObservationDefinitionImport from "@/components/pages/ObservationDefinitionImport";
+import ObservationDefinitionImport from "@/components/pages/ObservationDefinition/ObservationDefinitionImport";
 import ProductImport from "@/components/pages/ProductImport";
-import ProductKnowledgeImport from "@/components/pages/ProductKnowledgeImport";
-import SpecimenDefinitionImport from "@/components/pages/SpecimenDefinitionImport";
+import ProductKnowledgeImport from "@/components/pages/ProductKnowledge/ProductKnowledgeImport";
+import SpecimenDefinitionImport from "@/components/pages/SpecimenDefinition/SpecimenDefinitionImport";
 import UsersImportPage from "@/components/pages/UsersImport";
 // import ValueSetsImport from "@/components/pages/ValueSetsImport";
 
@@ -20,9 +19,7 @@ const renderImportsPage = (activeTab: ImportTabId, content: ReactNode) => (
 );
 
 const routes = {
-  "/admin/import": () => <Redirect to="/admin/import/master-data" />,
-  "/admin/import/master-data": () =>
-    renderImportsPage("master-data", <MasterDataImport />),
+  "/admin/import": () => <Redirect to="/admin/import/users" />,
   "/admin/import/users": () => renderImportsPage("users", <UsersImportPage />),
   "/admin/import/departments": () =>
     renderImportsPage("departments", <DepartmentImport />),

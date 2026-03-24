@@ -1,4 +1,4 @@
-import { APIError, queryString, request } from "@/apis/request";
+import { queryString, request } from "@/apis/request";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,88 +10,61 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { disableOverride } from "@/config";
-import { useMasterDataAvailability } from "@/hooks/useMasterDataAvailability";
 import { ResourceCategoryResourceType } from "@/types/base/resourceCategory/resourceCategory";
 import {
-  parseActivityDefinitionCsv,
-  type ActivityDefinitionProcessedRow,
-} from "@/utils/masterImport/activityDefinition";
+  fetchExistingId,
+  normalizeName,
+  type ImportResults,
+  type PaginatedResponse,
+} from "@/utils/importHelpers";
+import { parseActivityDefinitionCsv } from "@/utils/masterImport/activityDefinition";
 import { upsertResourceCategories } from "@/utils/resourceCategory";
 import { createSlug } from "@/utils/slug";
-import { AlertCircle, CheckCircle2, Upload } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-interface ActivityDefinitionImportProps {
+import {
+  stripMappingErrors,
+  type ProcessedRow,
+  type ResolvedRow,
+} from "@/utils/activityDefinitionHelper";
+
+interface ActivityDefinitionCsvImportProps {
   facilityId?: string;
+  initialCsvText: string;
+  onBack: () => void;
 }
 
-interface ResolvedRow {
-  categorySlug?: string;
-  specimenSlugs: string[];
-  observationSlugs: string[];
-  chargeItemSlugs: string[];
-  locationIds: string[];
-  healthcareServiceId?: string | null;
-}
-
-type ProcessedRow = ActivityDefinitionProcessedRow & {
-  resolved?: ResolvedRow;
-};
-
-interface ImportResults {
-  processed: number;
-  created: number;
-  updated: number;
-  failed: number;
-  skipped: number;
-  failures: { rowIndex: number; title?: string; reason: string }[];
-}
-
-interface PaginatedResponse<T> {
-  results: T[];
-  count?: number;
-}
-
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-const csvEscape = (value: string) => `"${value.replace(/"/g, '""')}"`;
-
-const stripMappingErrors = (errors: string[]) =>
-  errors.filter(
-    (error) =>
-      !error.startsWith("Unknown specimen:") &&
-      !error.startsWith("Unknown observation:") &&
-      !error.startsWith("Unknown charge item:") &&
-      !error.startsWith("Unknown location:") &&
-      !error.startsWith("Unknown healthcare service:"),
-  );
-
-export default function ActivityDefinitionImport({
+export default function ActivityDefinitionCsvImport({
   facilityId,
-}: ActivityDefinitionImportProps) {
+  initialCsvText,
+  onBack,
+}: ActivityDefinitionCsvImportProps) {
   const [currentStep, setCurrentStep] = useState<
-    "upload" | "review" | "importing" | "done"
-  >("upload");
-  const [uploadError, setUploadError] = useState<string>("");
-  const [uploadedFileName, setUploadedFileName] = useState<string>("");
-  const [processedRows, setProcessedRows] = useState<ProcessedRow[]>([]);
+    "review" | "importing" | "done"
+  >("review");
+  const [processedRows, setProcessedRows] = useState<ProcessedRow[]>(() =>
+    parseActivityDefinitionCsv(initialCsvText),
+  );
   const [results, setResults] = useState<ImportResults | null>(null);
   const [totalToImport, setTotalToImport] = useState(0);
   const [mappingStatus, setMappingStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
-  const [mappingIssues, setMappingIssues] = useState<string[]>([]);
-  const [lastMappingSignature, setLastMappingSignature] = useState<string>("");
-  const { availability } = useMasterDataAvailability();
-  const repoFileAvailable = availability["activity-definition"];
-  const disableManualUpload = disableOverride && repoFileAvailable;
+  const lastMappingSignatureRef = useRef("");
+  const [uploadError, setUploadError] = useState("");
 
   const summary = useMemo(() => {
     const valid = processedRows.filter((row) => row.errors.length === 0).length;
     const invalid = processedRows.length - valid;
     return { total: processedRows.length, valid, invalid };
   }, [processedRows]);
+
+  // All valid rows are always selected — no row selection in CSV flow
+  const validRows = useMemo(
+    () => processedRows.filter((row) => row.errors.length === 0),
+    [processedRows],
+  );
 
   const uniqueSpecimenNames = useMemo(() => {
     const unique = new Set<string>();
@@ -147,16 +120,14 @@ export default function ActivityDefinitionImport({
     ],
   );
 
-  const resolveMappings = useCallback(async () => {
+  const resolveMappings = async () => {
     if (!facilityId) return;
     if (!mappingSignature) {
-      setMappingIssues(["No reference data found in CSV."]);
       setMappingStatus("error");
       return;
     }
 
     setMappingStatus("loading");
-    setMappingIssues([]);
 
     const issues: string[] = [];
     const specimenMap: Record<string, string> = {};
@@ -278,13 +249,12 @@ export default function ActivityDefinitionImport({
           }
         }),
       );
-    } catch (error) {
+    } catch {
       issues.push("Failed to resolve reference data.");
     }
 
-    setMappingIssues(issues);
     setMappingStatus(issues.length ? "error" : "ready");
-    setLastMappingSignature(mappingSignature);
+    lastMappingSignatureRef.current = mappingSignature;
 
     setProcessedRows((prevRows) =>
       prevRows.map((row) => {
@@ -300,7 +270,7 @@ export default function ActivityDefinitionImport({
           const key = normalizeName(name);
           const slug = specimenMap[key];
           if (!slug) {
-            updatedErrors.push(`Unknown specimen: ${name}`);
+            updatedErrors.push(`Specimen not found: ${name}`);
           } else {
             resolved.specimenSlugs.push(slug);
           }
@@ -310,7 +280,7 @@ export default function ActivityDefinitionImport({
           const key = normalizeName(name);
           const slug = observationMap[key];
           if (!slug) {
-            updatedErrors.push(`Unknown observation: ${name}`);
+            updatedErrors.push(`Observation not found: ${name}`);
           } else {
             resolved.observationSlugs.push(slug);
           }
@@ -320,7 +290,7 @@ export default function ActivityDefinitionImport({
           const key = normalizeName(name);
           const slug = chargeItemMap[key];
           if (!slug) {
-            updatedErrors.push(`Unknown charge item: ${name}`);
+            updatedErrors.push(`Charge item not found: ${name}`);
           } else {
             resolved.chargeItemSlugs.push(slug);
           }
@@ -330,7 +300,7 @@ export default function ActivityDefinitionImport({
           const key = normalizeName(name);
           const id = locationMap[key];
           if (!id) {
-            updatedErrors.push(`Unknown location: ${name}`);
+            updatedErrors.push(`Location not found: ${name}`);
           } else {
             resolved.locationIds.push(id);
           }
@@ -341,7 +311,7 @@ export default function ActivityDefinitionImport({
           const id = healthcareServiceMap[key];
           if (!id) {
             updatedErrors.push(
-              `Unknown healthcare service: ${row.data.healthcare_service_name}`,
+              `Healthcare service not found: ${row.data.healthcare_service_name}`,
             );
           } else {
             resolved.healthcareServiceId = id;
@@ -355,154 +325,34 @@ export default function ActivityDefinitionImport({
         };
       }),
     );
-  }, [
-    facilityId,
-    mappingSignature,
-    uniqueSpecimenNames,
-    uniqueObservationNames,
-    uniqueChargeItemNames,
-    uniqueLocationNames,
-    uniqueHealthcareServiceNames,
-  ]);
+  };
 
+  // Auto-resolve mappings when rows are loaded
   useEffect(() => {
     if (currentStep !== "review") return;
     if (!facilityId) return;
     if (!mappingSignature) return;
-    if (mappingStatus === "loading") return;
-    if (mappingSignature === lastMappingSignature) return;
+    if (mappingSignature === lastMappingSignatureRef.current) return;
 
     resolveMappings();
-  }, [
-    currentStep,
-    facilityId,
-    mappingSignature,
-    mappingStatus,
-    lastMappingSignature,
-    resolveMappings,
-  ]);
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (disableManualUpload) {
-      setUploadError(
-        "Manual uploads are disabled because activity definition data is bundled with this build.",
-      );
-      setUploadedFileName("");
-      return;
-    }
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
-      setUploadError("Please upload a valid CSV file");
-      setUploadedFileName("");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const csvText = e.target?.result as string;
-        const processed = parseActivityDefinitionCsv(csvText);
-
-        setUploadError("");
-        setUploadedFileName(file.name);
-        setProcessedRows(processed);
-        setResults(null);
-        setMappingIssues([]);
-        setMappingStatus("idle");
-        setLastMappingSignature("");
-        setCurrentStep("review");
-      } catch {
-        setUploadError("Error processing CSV file");
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const downloadSample = () => {
-    const headers = [
-      "title",
-      "slug_value",
-      "description",
-      "usage",
-      "status",
-      "classification",
-      "category_name",
-      "code_system",
-      "code_value",
-      "code_display",
-      "diagnostic_report_system",
-      "diagnostic_report_code",
-      "diagnostic_report_display",
-      "specimen_names",
-      "observation_names",
-      "charge_item_names",
-      "location_names",
-      "healthcare_service_name",
-      "derived_from_uri",
-      "body_site_system",
-      "body_site_code",
-      "body_site_display",
-    ];
-
-    const rows = [
-      [
-        "Complete Blood Count",
-        "",
-        "Complete blood count test",
-        "Order CBC for baseline evaluation",
-        "active",
-        "laboratory",
-        "Hematology",
-        "http://snomed.info/sct",
-        "26604007",
-        "Complete blood count",
-        "http://loinc.org",
-        "718-7",
-        "Hemoglobin [Mass/volume] in Blood",
-        "Whole Blood",
-        "Hemoglobin, Platelet Count",
-        "CBC Charge Item",
-        "Main Lab",
-        "General Medicine",
-        "",
-        "",
-        "",
-        "",
-      ].map(csvEscape),
-    ];
-
-    const sampleCSV = `${headers.join(",")}\n${rows
-      .map((row) => row.join(","))
-      .join("\n")}`;
-    const blob = new Blob([sampleCSV], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "sample_activity_definition.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
+  }, [currentStep, facilityId, mappingSignature]);
 
   const runImport = async () => {
     if (!facilityId) {
       setUploadError("Select a facility to import activity definitions");
-      setCurrentStep("upload");
       return;
     }
 
-    const validRows = processedRows.filter((row) => row.errors.length === 0);
-    const invalidRows = processedRows.length - validRows.length;
-    setTotalToImport(validRows.length);
+    const rowsToImport = validRows;
+    setTotalToImport(rowsToImport.length);
 
-    if (validRows.length === 0) {
+    if (rowsToImport.length === 0) {
       setResults({
         processed: 0,
         created: 0,
         updated: 0,
         failed: 0,
-        skipped: invalidRows,
+        skipped: summary.invalid,
         failures: [],
       });
       setCurrentStep("done");
@@ -515,23 +365,22 @@ export default function ActivityDefinitionImport({
       created: 0,
       updated: 0,
       failed: 0,
-      skipped: invalidRows,
+      skipped: summary.invalid,
       failures: [],
     });
 
     const categorySlugMap = await upsertResourceCategories({
       facilityId,
-      categories: validRows.map((row) => row.data.category_name),
+      categories: rowsToImport.map((row) => row.data.category_name),
       resourceType: ResourceCategoryResourceType.activity_definition,
       slugPrefix: "ad",
     });
 
-    for (const row of validRows) {
+    for (const row of rowsToImport) {
       try {
-        const slug = row.data.slug_value?.trim()
-          ? row.data.slug_value.trim()
-          : await createSlug(row.data.title, 25);
-
+        const rawSlug = row.data.slug_value?.trim();
+        const slug = rawSlug ? rawSlug : await createSlug(row.data.title, 25);
+        const detailSlug = `f-${facilityId}-${slug}`;
         const categorySlug =
           categorySlugMap.get(normalizeName(row.data.category_name)) || "";
         const payload = {
@@ -549,21 +398,23 @@ export default function ActivityDefinitionImport({
           facility: facilityId,
           specimen_requirements: row.resolved?.specimenSlugs ?? [],
           observation_result_requirements: row.resolved?.observationSlugs ?? [],
-          charge_item_definitions: row.resolved?.chargeItemSlugs ?? [],
-          locations: row.resolved?.locationIds ?? [],
+          charge_item_definitions: [],
+          locations: [],
           category: categorySlug,
           healthcare_service: row.resolved?.healthcareServiceId ?? null,
         };
 
-        const detailPath = `/api/v1/facility/${facilityId}/activity_definition/${slug}/`;
-        const listPath = `/api/v1/facility/${facilityId}/activity_definition/`;
-
-        try {
-          await request(detailPath, { method: "GET" });
-          await request(detailPath, {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          });
+        const detailPath = `/api/v1/facility/${facilityId}/activity_definition/${detailSlug}/`;
+        const upsertPath = `/api/v1/facility/${facilityId}/activity_definition/upsert/`;
+        const existingId = await fetchExistingId(detailPath);
+        const datapoint = existingId
+          ? { ...payload, id: `f-${facilityId}-${slug}` }
+          : payload;
+        await request(upsertPath, {
+          method: "POST",
+          body: JSON.stringify({ datapoints: [datapoint] }),
+        });
+        if (existingId) {
           setResults((prev) =>
             prev
               ? {
@@ -573,15 +424,7 @@ export default function ActivityDefinitionImport({
                 }
               : prev,
           );
-        } catch (error) {
-          if (error instanceof APIError && error.status !== 404) {
-            throw error;
-          }
-
-          await request(listPath, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
+        } else {
           setResults((prev) =>
             prev
               ? {
@@ -613,181 +456,105 @@ export default function ActivityDefinitionImport({
     setCurrentStep("done");
   };
 
-  if (currentStep === "upload") {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Import Activity Definitions from CSV
-            </CardTitle>
-            <CardDescription>
-              Upload a CSV file to create activity definitions and validate them
-              before import.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="activity-definition-csv-upload"
-                disabled={disableManualUpload}
-              />
-              <label
-                htmlFor="activity-definition-csv-upload"
-                className={
-                  disableManualUpload
-                    ? "cursor-not-allowed opacity-60"
-                    : "cursor-pointer"
-                }
-              >
-                <div className="flex flex-col items-center gap-4">
-                  <Upload className="h-12 w-12 text-gray-400" />
-                  <div>
-                    <p className="text-lg font-medium">
-                      Click to upload CSV file
-                    </p>
-                    <p className="text-sm text-gray-500">or drag and drop</p>
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Required columns: title, description, usage, status,
-                    classification, category_name, code_system, code_value,
-                    code_display
-                  </p>
-                  <Button variant="outline" size="sm" onClick={downloadSample}>
-                    Download Sample CSV
-                  </Button>
-                </div>
-              </label>
-            </div>
-
-            {uploadedFileName && (
-              <p className="mt-3 text-sm text-gray-600">
-                Selected file: {uploadedFileName}
-              </p>
-            )}
-
-            {disableManualUpload && (
-              <Alert className="mt-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Manual uploads are disabled because this build includes an
-                  activity definition dataset in the repository.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {uploadError && (
-              <Alert className="mt-4" variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{uploadError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (currentStep === "review") {
+    const isResolving = mappingStatus === "idle" || mappingStatus === "loading";
+
     return (
       <div className="max-w-7xl mx-auto">
         <Card>
           <CardHeader>
-            <CardTitle>Activity Definition Import Wizard</CardTitle>
+            <CardTitle>Activity Definition Import — CSV Review</CardTitle>
             <CardDescription>
               Review and validate activity definitions before importing.
             </CardDescription>
-            <div className="mt-4">
-              <Progress value={100} className="h-2" />
-            </div>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-4 mb-4">
-              <Badge variant="outline">Total: {summary.total}</Badge>
-              <Badge variant="primary">Valid: {summary.valid}</Badge>
-              <Badge variant="secondary">Invalid: {summary.invalid}</Badge>
-            </div>
+            {isResolving ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-4 text-gray-500">
+                <Loader2 className="h-8 w-8 animate-spin" />
+                <p className="text-sm">
+                  Validating references — specimens, observations, charge items,
+                  locations, and healthcare services…
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-4 mb-4">
+                  <Badge variant="outline">Total: {summary.total}</Badge>
+                  <Badge variant="primary">Valid: {summary.valid}</Badge>
+                  <Badge variant="secondary">Invalid: {summary.invalid}</Badge>
+                </div>
 
-            {(mappingStatus === "loading" || mappingIssues.length > 0) && (
-              <Alert
-                className="mb-4"
-                variant={mappingIssues.length > 0 ? "destructive" : "default"}
-              >
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {mappingStatus === "loading" &&
-                    "Resolving specimens, observations, charge items, locations, healthcare services, and categories..."}
-                  {mappingIssues.length > 0 && (
-                    <div className="space-y-1">
-                      {mappingIssues.map((issue) => (
-                        <div key={issue}>{issue}</div>
-                      ))}
-                    </div>
-                  )}
-                </AlertDescription>
-              </Alert>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="max-h-80 overflow-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-600">
+                        <tr>
+                          <th className="px-4 py-2 text-left">Row</th>
+                          <th className="px-4 py-2 text-left">Title</th>
+                          <th className="px-4 py-2 text-left">Category</th>
+                          <th className="px-4 py-2 text-left">Status</th>
+                          <th className="px-4 py-2 text-left">Issues</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {processedRows.map((row) => (
+                          <tr
+                            key={row.rowIndex}
+                            className={
+                              row.errors.length === 0
+                                ? "border-t border-gray-100"
+                                : "border-t border-gray-100 bg-gray-50 text-gray-400"
+                            }
+                          >
+                            <td className="px-4 py-2 text-gray-500">
+                              {row.rowIndex}
+                            </td>
+                            <td className="px-4 py-2">{row.data.title}</td>
+                            <td className="px-4 py-2">
+                              {row.data.category_name}
+                            </td>
+                            <td className="px-4 py-2">
+                              {row.errors.length === 0 ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-700">
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Valid
+                                </span>
+                              ) : (
+                                <span className="text-red-600">Invalid</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-xs text-gray-600">
+                              {row.errors.length > 0
+                                ? row.errors.join("; ")
+                                : "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {uploadError && (
+                  <Alert className="mt-4" variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{uploadError}</AlertDescription>
+                  </Alert>
+                )}
+              </>
             )}
 
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="max-h-80 overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Row</th>
-                      <th className="px-4 py-2 text-left">Title</th>
-                      <th className="px-4 py-2 text-left">Category</th>
-                      <th className="px-4 py-2 text-left">Status</th>
-                      <th className="px-4 py-2 text-left">Issues</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {processedRows.map((row) => (
-                      <tr
-                        key={row.rowIndex}
-                        className="border-t border-gray-100"
-                      >
-                        <td className="px-4 py-2 text-gray-500">
-                          {row.rowIndex}
-                        </td>
-                        <td className="px-4 py-2">{row.data.title}</td>
-                        <td className="px-4 py-2">{row.data.category_name}</td>
-                        <td className="px-4 py-2">
-                          {row.errors.length === 0 ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700">
-                              <CheckCircle2 className="h-4 w-4" />
-                              Valid
-                            </span>
-                          ) : (
-                            <span className="text-red-600">Invalid</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-gray-600">
-                          {row.errors.length > 0 ? row.errors.join("; ") : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
             <div className="flex justify-between mt-6">
-              <Button
-                variant="outline"
-                onClick={() => setCurrentStep("upload")}
-              >
+              <Button variant="outline" onClick={onBack}>
                 Back
               </Button>
               <Button
                 onClick={runImport}
-                disabled={summary.valid === 0 || mappingStatus === "loading"}
+                disabled={validRows.length === 0 || isResolving}
               >
-                Import
+                Import {validRows.length} Valid Row
+                {validRows.length !== 1 ? "s" : ""}
               </Button>
             </div>
           </CardContent>
@@ -828,6 +595,7 @@ export default function ActivityDefinitionImport({
     );
   }
 
+  // done
   return (
     <div className="max-w-4xl mx-auto">
       <Card>
@@ -880,19 +648,7 @@ export default function ActivityDefinitionImport({
           )}
 
           <div className="flex justify-end mt-6">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setProcessedRows([]);
-                setResults(null);
-                setUploadedFileName("");
-                setUploadError("");
-                setMappingIssues([]);
-                setMappingStatus("idle");
-                setLastMappingSignature("");
-                setCurrentStep("upload");
-              }}
-            >
+            <Button variant="outline" onClick={onBack}>
               Upload Another File
             </Button>
           </div>

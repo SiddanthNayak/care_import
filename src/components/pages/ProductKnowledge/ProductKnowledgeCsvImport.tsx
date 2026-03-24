@@ -1,4 +1,4 @@
-import { AlertCircle, Upload } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { request } from "@/apis/request";
@@ -12,15 +12,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { disableOverride } from "@/config";
-import { useMasterDataAvailability } from "@/hooks/useMasterDataAvailability";
 import { ResourceCategoryResourceType } from "@/types/base/resourceCategory/resourceCategory";
 import {
   ProductKnowledgeCreate,
   ProductKnowledgeStatus,
 } from "@/types/inventory/productKnowledge/productKnowledge";
+import { type ImportResults } from "@/utils/importHelpers";
 import {
-  getExistingProductKnowledgeSlugs,
   normalizeProductKnowledgeName,
   parseProductKnowledgeCsv,
   resolveProductKnowledgeDatapoint,
@@ -29,32 +27,26 @@ import {
 import { upsertResourceCategories } from "@/utils/resourceCategory";
 import { createSlug } from "@/utils/slug";
 
-interface ProductKnowledgeImportProps {
-  facilityId?: string;
-}
-
 type ProcessedRow = ProductKnowledgeProcessedRow;
 
-interface ImportResults {
-  processed: number;
-  created: number;
-  skipped: number;
-  failed: number;
-  failures: { rowIndex: number; name?: string; reason: string }[];
+interface ProductKnowledgeCsvImportProps {
+  facilityId?: string;
+  initialCsvText: string;
+  onBack: () => void;
 }
 
-export default function ProductKnowledgeImport({
+export default function ProductKnowledgeCsvImport({
   facilityId,
-}: ProductKnowledgeImportProps) {
+  initialCsvText,
+  onBack,
+}: ProductKnowledgeCsvImportProps) {
   const [currentStep, setCurrentStep] = useState<
-    "upload" | "review" | "importing" | "done"
-  >("upload");
-  const [uploadError, setUploadError] = useState("");
-  const [processedRows, setProcessedRows] = useState<ProcessedRow[]>([]);
+    "review" | "importing" | "done"
+  >("review");
+  const [processedRows] = useState<ProcessedRow[]>(() =>
+    parseProductKnowledgeCsv(initialCsvText),
+  );
   const [results, setResults] = useState<ImportResults | null>(null);
-  const { availability } = useMasterDataAvailability();
-  const repoFileAvailable = availability["product-knowledge"];
-  const disableManualUpload = disableOverride && repoFileAvailable;
 
   const summary = useMemo(() => {
     const valid = processedRows.filter((row) => row.errors.length === 0).length;
@@ -62,54 +54,19 @@ export default function ProductKnowledgeImport({
     return { total: processedRows.length, valid, invalid };
   }, [processedRows]);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (disableManualUpload) {
-      setUploadError(
-        "Manual uploads are disabled because product knowledge data is bundled with this build.",
-      );
-      return;
-    }
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
-      setUploadError("Please upload a valid CSV file");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const csvText = e.target?.result as string;
-        setUploadError("");
-        setProcessedRows(parseProductKnowledgeCsv(csvText));
-        setCurrentStep("review");
-      } catch (error) {
-        setUploadError("Error processing CSV file");
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const downloadSample = () => {
-    const sampleCSV = `resourceCategory,slug,name,productType,codeDisplay,codeValue,baseUnitDisplay,dosageFormDisplay,dosageFormCode,routeCode,routeDisplay,alternateIdentifier,alternateNameType,alternateNameValue
-Medication,,Isoflurane inhaler,Medication,Product containing precisely isoflurane 999 milligram/1 milliliter conventional release solution for inhalation,784978007,milligram per milliliter, solution for inhalation,420641004,447694001,Respiratory tract route,,,`;
-    const blob = new Blob([sampleCSV], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "sample_product_knowledge.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
+  const validRows = useMemo(
+    () => processedRows.filter((row) => row.errors.length === 0),
+    [processedRows],
+  );
 
   const runImport = async () => {
-    const validRows = processedRows.filter((row) => row.errors.length === 0);
+    if (!facilityId) return;
 
     if (validRows.length === 0) {
       setResults({
         processed: 0,
         created: 0,
+        updated: 0,
         skipped: 0,
         failed: 0,
         failures: [],
@@ -122,12 +79,11 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
     setResults({
       processed: 0,
       created: 0,
+      updated: 0,
       skipped: 0,
       failed: 0,
       failures: [],
     });
-
-    if (!facilityId) return;
 
     const resourceCategories = [
       ...new Set(validRows.map((row) => row.normalized!.resourceCategory)),
@@ -140,22 +96,8 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
       slugPrefix: "pk",
     });
 
-    const existingSlugs = await getExistingProductKnowledgeSlugs(facilityId);
-
     for (const row of validRows) {
       const datapoint = await resolveProductKnowledgeDatapoint(row.normalized!);
-      if (existingSlugs.has(datapoint.slug)) {
-        setResults((prev) =>
-          prev
-            ? {
-                ...prev,
-                processed: prev.processed + 1,
-                skipped: prev.skipped + 1,
-              }
-            : prev,
-        );
-        continue;
-      }
 
       const categorySlug =
         categorySlugMap.get(
@@ -241,86 +183,12 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
     setCurrentStep("done");
   };
 
-  if (currentStep === "upload") {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Import Product Knowledge from CSV
-            </CardTitle>
-            <CardDescription>
-              Upload a CSV file to import product knowledge entries.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="product-knowledge-upload"
-                disabled={disableManualUpload}
-              />
-              <label
-                htmlFor="product-knowledge-upload"
-                className={
-                  disableManualUpload
-                    ? "cursor-not-allowed opacity-60"
-                    : "cursor-pointer"
-                }
-              >
-                <div className="flex flex-col items-center gap-4">
-                  <Upload className="h-12 w-12 text-gray-400" />
-                  <div>
-                    <p className="text-lg font-medium">
-                      Click to upload CSV file
-                    </p>
-                    <p className="text-sm text-gray-500">or drag and drop</p>
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Expected columns: resourceCategory, slug, name, productType,
-                    codeDisplay, codeValue, baseUnitDisplay, dosageFormDisplay,
-                    dosageFormCode, routeCode, routeDisplay,
-                    alternateIdentifier, alternateNameType, alternateNameValue
-                  </p>
-                  <Button variant="outline" size="sm" onClick={downloadSample}>
-                    Download Sample CSV
-                  </Button>
-                </div>
-              </label>
-            </div>
-
-            {disableManualUpload && (
-              <Alert className="mt-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Manual uploads are disabled because this build includes a
-                  product knowledge dataset in the repository.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {uploadError && (
-              <Alert className="mt-4" variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{uploadError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (currentStep === "review") {
     return (
       <div className="max-w-7xl mx-auto">
         <Card>
           <CardHeader>
-            <CardTitle>Product Knowledge Import Wizard</CardTitle>
+            <CardTitle>Product Knowledge Import — CSV Review</CardTitle>
             <CardDescription>
               Review and validate product knowledge before importing
             </CardDescription>
@@ -348,7 +216,11 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
                       {processedRows.map((row) => (
                         <tr
                           key={row.rowIndex}
-                          className="border-t border-gray-100"
+                          className={
+                            row.errors.length === 0
+                              ? "border-t border-gray-100"
+                              : "border-t border-gray-100 bg-gray-50 text-gray-400"
+                          }
                         >
                           <td className="px-4 py-2 text-gray-500">
                             {row.rowIndex}
@@ -375,21 +247,13 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
                 </div>
               </div>
             </div>
-            <div className="flex justify-end">
-              <Button
-                className="mt-4"
-                onClick={runImport}
-                disabled={summary.valid === 0}
-              >
-                Start Import
-              </Button>
-            </div>
-            <div className="mt-4">
-              <Button
-                variant="outline"
-                onClick={() => setCurrentStep("upload")}
-              >
+            <div className="flex justify-between mt-6">
+              <Button variant="outline" onClick={onBack}>
                 Back
+              </Button>
+              <Button onClick={runImport} disabled={validRows.length === 0}>
+                Import {validRows.length} Valid Row
+                {validRows.length !== 1 ? "s" : ""}
               </Button>
             </div>
           </CardContent>
@@ -423,14 +287,14 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
     );
   }
 
+  // done
   return (
     <div className="max-w-4xl mx-auto">
       <Card>
         <CardHeader>
           <CardTitle>Product Knowledge Import Complete</CardTitle>
           <CardDescription>
-            Created: {results?.created ?? 0} · Skipped: {results?.skipped ?? 0}{" "}
-            · Failed: {results?.failed ?? 0}
+            Created: {results?.created ?? 0} · Failed: {results?.failed ?? 0}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -447,7 +311,7 @@ Medication,,Isoflurane inhaler,Medication,Product containing precisely isofluran
             </Alert>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setCurrentStep("upload")}>
+            <Button variant="outline" onClick={onBack}>
               Import Another File
             </Button>
           </div>

@@ -1,8 +1,7 @@
-import { AlertCircle, CheckCircle2, Upload } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { APIError, queryString, request } from "@/apis/request";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { queryString, request } from "@/apis/request";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,45 +12,40 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { disableOverride } from "@/config";
-import { useMasterDataAvailability } from "@/hooks/useMasterDataAvailability";
+import { fetchExistingId, type ImportResults } from "@/utils/importHelpers";
 import {
   parseObservationDefinitionCsv,
   type ObservationProcessedRow,
 } from "@/utils/masterImport/observationDefinition";
 import { createSlug } from "@/utils/slug";
 
-interface ObservationDefinitionImportProps {
+interface ObservationDefinitionMasterImportProps {
   facilityId?: string;
+  initialCsvText: string;
+  onBack: () => void;
 }
 
-interface ImportResults {
-  processed: number;
-  created: number;
-  updated: number;
-  failed: number;
-  skipped: number;
-  failures: { rowIndex: number; title?: string; reason: string }[];
-}
-
-const csvEscape = (value: string) => `"${value.replace(/"/g, '""')}"`;
-
-export default function ObservationDefinitionImport({
+export default function ObservationDefinitionMasterImport({
   facilityId,
-}: ObservationDefinitionImportProps) {
+  initialCsvText,
+  onBack,
+}: ObservationDefinitionMasterImportProps) {
   const [currentStep, setCurrentStep] = useState<
-    "upload" | "review" | "importing" | "done"
-  >("upload");
-  const [uploadError, setUploadError] = useState<string>("");
-  const [uploadedFileName, setUploadedFileName] = useState<string>("");
-  const [processedRows, setProcessedRows] = useState<ObservationProcessedRow[]>(
-    [],
+    "review" | "importing" | "done"
+  >("review");
+  const [processedRows] = useState<ObservationProcessedRow[]>(() =>
+    parseObservationDefinitionCsv(initialCsvText),
+  );
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<number>>(
+    () =>
+      new Set(
+        parseObservationDefinitionCsv(initialCsvText)
+          .filter((row) => row.errors.length === 0)
+          .map((row) => row.rowIndex),
+      ),
   );
   const [results, setResults] = useState<ImportResults | null>(null);
   const [totalToImport, setTotalToImport] = useState(0);
-  const { availability } = useMasterDataAvailability();
-  const repoFileAvailable = availability["observation-definition"];
-  const disableManualUpload = disableOverride && repoFileAvailable;
 
   const summary = useMemo(() => {
     const valid = processedRows.filter((row) => row.errors.length === 0).length;
@@ -59,149 +53,30 @@ export default function ObservationDefinitionImport({
     return { total: processedRows.length, valid, invalid };
   }, [processedRows]);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (disableManualUpload) {
-      setUploadError(
-        "Manual uploads are disabled because observation definition data is bundled with this build.",
-      );
-      setUploadedFileName("");
-      return;
-    }
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const validRowIds = useMemo(
+    () =>
+      processedRows
+        .filter((row) => row.errors.length === 0)
+        .map((row) => row.rowIndex),
+    [processedRows],
+  );
 
-    if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
-      setUploadError("Please upload a valid CSV file");
-      setUploadedFileName("");
-      return;
-    }
+  const selectedValidCount = useMemo(
+    () => validRowIds.filter((rowId) => selectedRowIds.has(rowId)).length,
+    [selectedRowIds, validRowIds],
+  );
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const csvText = e.target?.result as string;
-        const processed = parseObservationDefinitionCsv(csvText);
-
-        setUploadError("");
-        setUploadedFileName(file.name);
-        setProcessedRows(processed);
-        setResults(null);
-        setCurrentStep("review");
-      } catch (error) {
-        setUploadError(
-          error instanceof Error ? error.message : "Error processing CSV file",
-        );
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const downloadSample = () => {
-    const headers = [
-      "title",
-      "description",
-      "category",
-      "status",
-      "code_system",
-      "code_value",
-      "code_display",
-      "permitted_data_type",
-      "component",
-      "body_site_system",
-      "body_site_code",
-      "body_site_display",
-      "method_system",
-      "method_code",
-      "method_display",
-      "permitted_unit_system",
-      "permitted_unit_code",
-      "permitted_unit_display",
-      "derived_from_uri",
-    ];
-
-    const componentExample = JSON.stringify([
-      {
-        code: {
-          system: "http://loinc.org",
-          code: "8480-6",
-          display: "Systolic blood pressure",
-        },
-        permitted_data_type: "quantity",
-        permitted_unit: {
-          system: "http://unitsofmeasure.org",
-          code: "mm[Hg]",
-          display: "mmHg",
-        },
-        qualified_ranges: [],
-      },
-    ]);
-
-    const rows = [
-      [
-        "Blood Pressure",
-        "Systolic blood pressure",
-        "vital_signs",
-        "active",
-        "http://loinc.org",
-        "8480-6",
-        "Systolic blood pressure",
-        "quantity",
-        componentExample,
-        "",
-        "",
-        "",
-        "http://snomed.info/sct",
-        "272394005",
-        "Technique",
-        "http://unitsofmeasure.org",
-        "mm[Hg]",
-        "mmHg",
-        "",
-      ].map(csvEscape),
-      [
-        "Fasting Blood Sugar",
-        "Fasting blood glucose",
-        "laboratory",
-        "active",
-        "http://loinc.org",
-        "1558-6",
-        "Glucose [Moles/volume] in Serum or Plasma",
-        "quantity",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "http://unitsofmeasure.org",
-        "mmol/L",
-        "mmol/L",
-        "",
-      ].map(csvEscape),
-    ];
-
-    const sampleCSV = `${headers.join(",")}\n${rows
-      .map((row) => row.join(","))
-      .join("\n")}`;
-    const blob = new Blob([sampleCSV], { type: "text/csv" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "sample_observation_definition.csv";
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
+  const allValidSelected =
+    validRowIds.length > 0 && selectedValidCount === validRowIds.length;
 
   const runImport = async () => {
-    if (!facilityId) {
-      setUploadError("Select a facility to import observation definitions");
-      setCurrentStep("upload");
-      return;
-    }
+    if (!facilityId) return;
 
-    const validRows = processedRows.filter((row) => row.errors.length === 0);
-    const invalidRows = processedRows.length - validRows.length;
+    const selectedRows = processedRows.filter((row) =>
+      selectedRowIds.has(row.rowIndex),
+    );
+    const validRows = selectedRows.filter((row) => row.errors.length === 0);
+    const invalidRows = selectedRows.length - validRows.length;
     setTotalToImport(validRows.length);
 
     if (validRows.length === 0) {
@@ -247,15 +122,17 @@ export default function ObservationDefinitionImport({
           qualified_ranges: row.data.qualified_ranges ?? [],
         };
 
-        const detailPath = `/api/v1/observation_definition/${slug}/${queryString({ facility: facilityId })}`;
-        const listPath = "/api/v1/observation_definition/";
-
-        try {
-          await request(detailPath, { method: "GET" });
-          await request(detailPath, {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          });
+        const detailPath = `/api/v1/observation_definition/f-${facilityId}-${slug}/${queryString({ facility: facilityId })}`;
+        const upsertPath = "/api/v1/observation_definition/upsert/";
+        const existingId = await fetchExistingId(detailPath);
+        const datapoint = existingId
+          ? { ...payload, id: `f-${facilityId}-${slug}` }
+          : payload;
+        await request(upsertPath, {
+          method: "POST",
+          body: JSON.stringify({ datapoints: [datapoint] }),
+        });
+        if (existingId) {
           setResults((prev) =>
             prev
               ? {
@@ -265,15 +142,7 @@ export default function ObservationDefinitionImport({
                 }
               : prev,
           );
-        } catch (error) {
-          if (error instanceof APIError && error.status !== 404) {
-            throw error;
-          }
-
-          await request(listPath, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
+        } else {
           setResults((prev) =>
             prev
               ? {
@@ -305,91 +174,12 @@ export default function ObservationDefinitionImport({
     setCurrentStep("done");
   };
 
-  if (currentStep === "upload") {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Import Observation Definitions from CSV
-            </CardTitle>
-            <CardDescription>
-              Upload a CSV file to create observation definitions and validate
-              them before import.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="observation-definition-csv-upload"
-                disabled={disableManualUpload}
-              />
-              <label
-                htmlFor="observation-definition-csv-upload"
-                className={
-                  disableManualUpload
-                    ? "cursor-not-allowed opacity-60"
-                    : "cursor-pointer"
-                }
-              >
-                <div className="flex flex-col items-center gap-4">
-                  <Upload className="h-12 w-12 text-gray-400" />
-                  <div>
-                    <p className="text-lg font-medium">
-                      Click to upload CSV file
-                    </p>
-                    <p className="text-sm text-gray-500">or drag and drop</p>
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Required columns: title, description, category,
-                    permitted_data_type, code_system, code_value, code_display
-                  </p>
-                  <Button variant="outline" size="sm" onClick={downloadSample}>
-                    Download Sample CSV
-                  </Button>
-                </div>
-              </label>
-            </div>
-
-            {uploadedFileName && (
-              <p className="mt-3 text-sm text-gray-600">
-                Selected file: {uploadedFileName}
-              </p>
-            )}
-
-            {disableManualUpload && (
-              <Alert className="mt-4">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Manual uploads are disabled because this build includes an
-                  observation definition dataset in the repository.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {uploadError && (
-              <Alert className="mt-4" variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{uploadError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (currentStep === "review") {
     return (
       <div className="max-w-7xl mx-auto">
         <Card>
           <CardHeader>
-            <CardTitle>Observation Definition Import Wizard</CardTitle>
+            <CardTitle>Observation Definition Import — Master Review</CardTitle>
             <CardDescription>
               Review and validate observation definitions before importing.
             </CardDescription>
@@ -403,12 +193,36 @@ export default function ObservationDefinitionImport({
               <Badge variant="primary">Valid: {summary.valid}</Badge>
               <Badge variant="secondary">Invalid: {summary.invalid}</Badge>
             </div>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+              <div>
+                Selected {selectedValidCount} of {summary.valid} valid rows
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="observation-definition-master-select-all"
+                  type="checkbox"
+                  checked={allValidSelected}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      setSelectedRowIds(new Set(validRowIds));
+                    } else {
+                      setSelectedRowIds(new Set());
+                    }
+                  }}
+                  disabled={validRowIds.length === 0}
+                />
+                <label htmlFor="observation-definition-master-select-all">
+                  Select all valid rows
+                </label>
+              </div>
+            </div>
 
             <div className="border border-gray-200 rounded-lg overflow-hidden">
               <div className="max-h-80 overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-50 text-gray-600">
                     <tr>
+                      <th className="px-4 py-2 text-left">Select</th>
                       <th className="px-4 py-2 text-left">Row</th>
                       <th className="px-4 py-2 text-left">Title</th>
                       <th className="px-4 py-2 text-left">Category</th>
@@ -420,8 +234,31 @@ export default function ObservationDefinitionImport({
                     {processedRows.map((row) => (
                       <tr
                         key={row.rowIndex}
-                        className="border-t border-gray-100"
+                        className={
+                          row.errors.length === 0
+                            ? "border-t border-gray-100"
+                            : "border-t border-gray-100 bg-gray-50 text-gray-400"
+                        }
                       >
+                        <td className="px-4 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedRowIds.has(row.rowIndex)}
+                            onChange={(event) => {
+                              if (row.errors.length > 0) return;
+                              setSelectedRowIds((prev) => {
+                                const next = new Set(prev);
+                                if (event.target.checked) {
+                                  next.add(row.rowIndex);
+                                } else {
+                                  next.delete(row.rowIndex);
+                                }
+                                return next;
+                              });
+                            }}
+                            disabled={row.errors.length > 0}
+                          />
+                        </td>
                         <td className="px-4 py-2 text-gray-500">
                           {row.rowIndex}
                         </td>
@@ -448,14 +285,12 @@ export default function ObservationDefinitionImport({
             </div>
 
             <div className="flex justify-between mt-6">
-              <Button
-                variant="outline"
-                onClick={() => setCurrentStep("upload")}
-              >
+              <Button variant="outline" onClick={onBack}>
                 Back
               </Button>
-              <Button onClick={runImport} disabled={summary.valid === 0}>
-                Import
+              <Button onClick={runImport} disabled={selectedValidCount === 0}>
+                Import {selectedValidCount} Selected Row
+                {selectedValidCount !== 1 ? "s" : ""}
               </Button>
             </div>
           </CardContent>
@@ -496,6 +331,7 @@ export default function ObservationDefinitionImport({
     );
   }
 
+  // done
   return (
     <div className="max-w-4xl mx-auto">
       <Card>
@@ -548,17 +384,8 @@ export default function ObservationDefinitionImport({
           )}
 
           <div className="flex justify-end mt-6">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setProcessedRows([]);
-                setResults(null);
-                setUploadedFileName("");
-                setUploadError("");
-                setCurrentStep("upload");
-              }}
-            >
-              Upload Another File
+            <Button variant="outline" onClick={onBack}>
+              Import Another File
             </Button>
           </div>
         </CardContent>
