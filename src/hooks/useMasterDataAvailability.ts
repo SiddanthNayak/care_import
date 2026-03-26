@@ -9,6 +9,13 @@ export interface MasterDataFile {
 
 const REPO = import.meta.env.REACT_MASTER_DATA_REPO as string | undefined;
 const BRANCH = (import.meta.env.REACT_MASTER_DATA_BRANCH as string) || "main";
+const GITHUB_TOKEN = import.meta.env.REACT_GITHUB_TOKEN as string | undefined;
+
+/** Common headers for GitHub API requests */
+const githubHeaders: Record<string, string> = {
+  Accept: "application/vnd.github.v3+json",
+  ...(GITHUB_TOKEN ? { Authorization: `Bearer ${GITHUB_TOKEN}` } : {}),
+};
 
 /** GitHub Contents API entry */
 interface GitHubContentEntry {
@@ -99,7 +106,7 @@ export const useMasterDataAvailability = () => {
 
               try {
                 const response = await fetch(apiUrl, {
-                  headers: { Accept: "application/vnd.github.v3+json" },
+                  headers: githubHeaders,
                   cache: "no-store",
                 });
 

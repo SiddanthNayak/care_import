@@ -1,7 +1,7 @@
-import { CheckCircle2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { request } from "@/apis/request";
+import ObservationDefinitionReviewTable from "@/components/shared/ObservationDefinitionReviewTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -155,52 +155,7 @@ export default function ObservationDefinitionCsvImport({
               <Badge variant="secondary">Invalid: {summary.invalid}</Badge>
             </div>
 
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="max-h-80 overflow-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Row</th>
-                      <th className="px-4 py-2 text-left">Title</th>
-                      <th className="px-4 py-2 text-left">Category</th>
-                      <th className="px-4 py-2 text-left">Status</th>
-                      <th className="px-4 py-2 text-left">Issues</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {processedRows.map((row) => (
-                      <tr
-                        key={row.rowIndex}
-                        className={
-                          row.errors.length === 0
-                            ? "border-t border-gray-100"
-                            : "border-t border-gray-100 bg-gray-50 text-gray-400"
-                        }
-                      >
-                        <td className="px-4 py-2 text-gray-500">
-                          {row.rowIndex}
-                        </td>
-                        <td className="px-4 py-2">{row.data.title}</td>
-                        <td className="px-4 py-2">{row.data.category}</td>
-                        <td className="px-4 py-2">
-                          {row.errors.length === 0 ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700">
-                              <CheckCircle2 className="h-4 w-4" />
-                              Valid
-                            </span>
-                          ) : (
-                            <span className="text-red-600">Invalid</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-gray-600">
-                          {row.errors.length > 0 ? row.errors.join("; ") : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <ObservationDefinitionReviewTable processedRows={processedRows} />
 
             <div className="flex justify-between mt-6">
               <Button variant="outline" onClick={onBack}>
