@@ -108,7 +108,7 @@ export default function ChargeItemDefinitionImport({
         );
 
         const missingHeaders = REQUIRED_HEADERS.filter(
-          (header) => headerMap[header] === undefined,
+          (header) => headerMap[normalizeHeader(header)] === undefined,
         );
 
         if (missingHeaders.length > 0) {
