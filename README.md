@@ -22,7 +22,6 @@ A plug-in for [Care](https://github.com/ohcnetwork/care_fe) that helps hospital 
   - [9. Observation Definitions](#9-observation-definitions)
   - [10. Activity Definitions](#10-activity-definitions)
 - [CSV Upload vs Dataset Import](#csv-upload-vs-dataset-import)
-- [Exports](#exports)
 
 ---
 
