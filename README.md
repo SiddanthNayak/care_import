@@ -2,8 +2,6 @@
 
 A plug-in for [Care](https://github.com/ohcnetwork/care_fe) that helps hospital administrators set up their facility by importing data from spreadsheets (CSV files). You can import users, departments, locations, medications, lab tests, and more — all through a simple upload-and-review workflow.
 
-No engineering skills are required. Prepare your CSV in Excel or Google Sheets, save it as `.csv`, upload it, review the preview, and click Import.
-
 ---
 
 ## Table of Contents
