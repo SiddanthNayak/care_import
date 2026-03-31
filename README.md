@@ -146,14 +146,14 @@ Upload a CSV to create your department hierarchy. Parents and children are resol
 
 **Required columns:**
 
-- `name` — Department name (also accepts `department` as column name)
-- `parent` — Name of the parent department (also accepts `parentDepartment`). Leave **blank** for top-level departments.
+- `name` — Department name
+- `parent` — Name of the parent department. Leave **blank** for top-level departments.
 
 **What happens during import:**
 
 - Parent departments are created before their children, even if the parent row appears later in the file
 - If a top-level department with that name already exists, it is reused (not duplicated)
-- Duplicate rows (same name under same parent) are flagged and skipped
+- Duplicate rows (same name under same parent) are flagged and import will be disabled
 - Circular references (a department that is its own ancestor) are caught and reported
 
 **Sample CSV:**

@@ -52,10 +52,10 @@ const buildHeaderMap = (headers: string[]) => {
   };
   headers.forEach((header, index) => {
     const normalized = normalizeHeader(header);
-    if (normalized === "name" || normalized === "department") {
+    if (normalized === "name") {
       headerMap.name = index;
     }
-    if (normalized === "parent" || normalized === "parentdepartment") {
+    if (normalized === "parent") {
       headerMap.parent = index;
     }
   });
@@ -101,6 +101,9 @@ export default function DepartmentImport({
   const [uploadError, setUploadError] = useState<string>("");
   const [departments, setDepartments] = useState<DepartmentNode[]>([]);
   const [departmentRows, setDepartmentRows] = useState<DepartmentRow[]>([]);
+  const [duplicateErrors, setDuplicateErrors] = useState<
+    DepartmentImportFailure[]
+  >([]);
   const [importProgress, setImportProgress] = useState(0);
   const [importTotal, setImportTotal] = useState(0);
   const [importProcessed, setImportProcessed] = useState(0);
@@ -161,7 +164,29 @@ export default function DepartmentImport({
           }
         }
 
+        const normalizeName = (value: string) => value.trim().toLowerCase();
+        const buildCompositeKey = (name: string, parent?: string) => {
+          const parentKey = normalizeName(parent ?? "");
+          const nameKey = normalizeName(name);
+          return `${parentKey}::${nameKey}`;
+        };
+
+        const seen = new Map<string, DepartmentRow>();
+        const duplicates: DepartmentImportFailure[] = [];
+        for (const row of dataRows) {
+          const key = buildCompositeKey(row.name, row.parent);
+          if (seen.has(key)) {
+            duplicates.push({
+              departmentName: row.name,
+              reason: `Duplicate department under parent: ${row.parent?.trim() || "(root)"}`,
+            });
+          } else {
+            seen.set(key, row);
+          }
+        }
+
         setUploadError("");
+        setDuplicateErrors(duplicates);
         setDepartmentRows(dataRows);
         setDepartments(buildDepartmentTree(dataRows));
         setCurrentStep("review");
@@ -189,7 +214,6 @@ export default function DepartmentImport({
 
     const normalizeName = (value: string) => value.trim().toLowerCase();
     const rowsByKey = new Map<string, DepartmentRow>();
-    const duplicateIssues: DepartmentImportFailure[] = [];
 
     const buildCompositeKey = (name: string, parent?: string) => {
       const parentKey = normalizeName(parent ?? "");
@@ -199,29 +223,10 @@ export default function DepartmentImport({
 
     departmentRows.forEach((row) => {
       const compositeKey = buildCompositeKey(row.name, row.parent);
-      const existing = rowsByKey.get(compositeKey);
-      if (existing) {
-        duplicateIssues.push({
-          departmentName: row.name,
-          reason: `Duplicate department under parent: ${row.parent ?? "(root)"}`,
-        });
-      } else {
+      if (!rowsByKey.has(compositeKey)) {
         rowsByKey.set(compositeKey, row);
       }
     });
-
-    if (duplicateIssues.length > 0) {
-      setResults((prev) =>
-        prev
-          ? {
-              ...prev,
-              processed: prev.processed + duplicateIssues.length,
-              failed: prev.failed + duplicateIssues.length,
-              failures: [...prev.failures, ...duplicateIssues],
-            }
-          : prev,
-      );
-    }
 
     const existingResponse = await apis.facility.organizations.list(
       facilityId,
@@ -516,6 +521,22 @@ SD2,Dep1`;
             <h3 className="text-lg font-semibold mb-4">
               Review All Departments
             </h3>
+            {duplicateErrors.length > 0 && (
+              <Alert className="mb-4" variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <p className="font-medium mb-1">
+                    Duplicate rows detected — please fix your CSV before
+                    importing:
+                  </p>
+                  {duplicateErrors.map((dup) => (
+                    <div key={`${dup.departmentName}-${dup.reason}`}>
+                      {dup.departmentName}: {dup.reason}
+                    </div>
+                  ))}
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="border rounded-lg bg-white">
               {departments.map((department) =>
                 renderDepartmentNode(department),
@@ -523,7 +544,11 @@ SD2,Dep1`;
             </div>
           </div>
           <div className="flex justify-end">
-            <Button className="mt-4" onClick={saveDepartments}>
+            <Button
+              className="mt-4"
+              onClick={saveDepartments}
+              disabled={duplicateErrors.length > 0}
+            >
               Save
             </Button>
           </div>
