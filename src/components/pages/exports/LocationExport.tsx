@@ -20,13 +20,18 @@ interface LocationExportProps {
   facilityId?: string;
 }
 
+interface LocationParent {
+  id: string;
+  name: string;
+}
+
 interface LocationRead {
   id: string;
   name: string;
   form: string;
   description: string;
   status: string;
-  parent?: string | null;
+  parent?: LocationParent | null;
   has_children: boolean;
 }
 
@@ -64,9 +69,17 @@ function buildHierarchicalCsvRows(locations: LocationRead[]): string[][] {
     if (!loc.parent) {
       roots.push(loc);
     } else {
-      const children = childrenMap.get(loc.parent) ?? [];
+      const parentId = loc.parent.id;
+      const children = childrenMap.get(parentId) ?? [];
       children.push(loc);
-      childrenMap.set(loc.parent, children);
+      childrenMap.set(parentId, children);
+    }
+  }
+
+  // Treat locations whose parent wasn't fetched as roots (orphans)
+  for (const loc of locations) {
+    if (loc.parent && !byId.has(loc.parent.id)) {
+      roots.push(loc);
     }
   }
 
