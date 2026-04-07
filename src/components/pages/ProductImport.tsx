@@ -919,7 +919,7 @@ export default function ProductImport({ facilityId }: ProductImportProps) {
     // Phase 2: Add to inventory via delivery orders + supply deliveries
     if (inventoryItems.length > 0 && selectedLocationId) {
       setImportPhase("inventory");
-      const BATCH_SIZE = 20;
+      const BATCH_SIZE = 100;
       const today = new Date().toISOString().split("T")[0];
 
       for (let i = 0; i < inventoryItems.length; i += BATCH_SIZE) {
