@@ -1,7 +1,7 @@
 import { AlertCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { apis } from "@/apis";
+import { APIError, apis } from "@/apis";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -143,18 +143,47 @@ export default function ProductKnowledgeCsvImport({
       }
 
       try {
-        await apis.productKnowledge.create(
-          productKnowledge as unknown as Record<string, unknown>,
-        );
-        setResults((prev) =>
-          prev
-            ? {
-                ...prev,
-                processed: prev.processed + 1,
-                created: prev.created + 1,
-              }
-            : prev,
-        );
+        const pkSlug = `f-${facilityId}-${productKnowledge.slug_value}`;
+        let existingId: string | undefined;
+        try {
+          const existing = await apis.productKnowledge.get(pkSlug);
+          existingId = (existing as { id?: string }).id;
+        } catch (error) {
+          if (error instanceof APIError && error.status === 404) {
+            existingId = undefined;
+          } else {
+            throw error;
+          }
+        }
+
+        if (existingId) {
+          await apis.productKnowledge.update(
+            pkSlug,
+            productKnowledge as unknown as Record<string, unknown>,
+          );
+          setResults((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  processed: prev.processed + 1,
+                  updated: prev.updated + 1,
+                }
+              : prev,
+          );
+        } else {
+          await apis.productKnowledge.create(
+            productKnowledge as unknown as Record<string, unknown>,
+          );
+          setResults((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  processed: prev.processed + 1,
+                  created: prev.created + 1,
+                }
+              : prev,
+          );
+        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : "Unknown error";
         setResults((prev) =>
@@ -291,7 +320,8 @@ export default function ProductKnowledgeCsvImport({
         <CardHeader>
           <CardTitle>Product Knowledge Import Complete</CardTitle>
           <CardDescription>
-            Created: {results?.created ?? 0} · Failed: {results?.failed ?? 0}
+            Created: {results?.created ?? 0} · Updated: {results?.updated ?? 0}{" "}
+            · Failed: {results?.failed ?? 0}
           </CardDescription>
         </CardHeader>
         <CardContent>
